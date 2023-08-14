@@ -6,6 +6,6 @@ Parallel webscraping of any webtext. Implementation through selenium or BS4 (run
 
 
 ### Demo Ticker as MacOs Menu Bar Item
-![](images/demo_menubar.png.png)
+![](images/demo_menubar.png)
 
 
