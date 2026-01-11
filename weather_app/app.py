@@ -242,22 +242,55 @@ class WeatherMenuBarApp(rumps.App):
         thread.start()
 
     def _set_location(self, _):
-        """Set location manually."""
-        window = rumps.Window(
-            message="Enter city name:",
-            title="Set Location",
-            default_text="",
-            ok="Search",
-            cancel="Cancel",
-            dimensions=(300, 24)
-        )
-        response = window.run()
+        """Set location manually using AppleScript dialog."""
+        logger.info("Opening location dialog")
 
-        if not response.clicked or not response.text.strip():
+        import subprocess
+
+        # Use AppleScript for reliable text input
+        script = '''
+        tell application "System Events"
+            display dialog "Enter city name:" default answer "" with title "Set Location" buttons {"Cancel", "Search"} default button "Search"
+            set theResponse to text returned of result
+            return theResponse
+        end tell
+        '''
+
+        try:
+            result = subprocess.run(
+                ['osascript', '-e', script],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                logger.info("Dialog cancelled")
+                return
+
+            query = result.stdout.strip()
+            logger.info(f"User entered: {query}")
+
+        except subprocess.TimeoutExpired:
+            logger.error("Dialog timed out")
+            return
+        except Exception as e:
+            logger.error(f"Dialog error: {e}")
             return
 
-        query = response.text.strip()
-        locations = self.weather_service.search_locations(query)
+        if not query:
+            logger.info("Empty query")
+            return
+
+        logger.info(f"Searching for: {query}")
+
+        try:
+            locations = self.weather_service.search_locations(query)
+            logger.info(f"Found {len(locations)} locations")
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            rumps.alert("Error", f"Search failed: {e}")
+            return
 
         if not locations:
             rumps.alert("No Results", f"No locations found for '{query}'")
@@ -266,33 +299,49 @@ class WeatherMenuBarApp(rumps.App):
         if len(locations) == 1:
             selected = locations[0]
         else:
-            msg = "Select a location:\n\n"
-            for i, loc in enumerate(locations, 1):
-                msg += f"{i}. {loc.display_name}\n"
+            # Build selection dialog with AppleScript
+            choices = [loc.display_name for loc in locations]
+            choices_str = '", "'.join(choices)
 
-            select_window = rumps.Window(
-                message=msg,
-                title="Select",
-                default_text="1",
-                ok="OK",
-                cancel="Cancel"
-            )
-            resp = select_window.run()
-
-            if not resp.clicked:
-                return
+            select_script = f'''
+            tell application "System Events"
+                choose from list {{"{choices_str}"}} with title "Select Location" with prompt "Choose a location:"
+            end tell
+            '''
 
             try:
-                idx = int(resp.text.strip()) - 1
-                if 0 <= idx < len(locations):
-                    selected = locations[idx]
-                else:
+                result = subprocess.run(
+                    ['osascript', '-e', select_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+
+                if result.returncode != 0 or result.stdout.strip() == "false":
+                    logger.info("Selection cancelled")
                     return
-            except ValueError:
+
+                chosen = result.stdout.strip()
+                logger.info(f"User selected: {chosen}")
+
+                # Find the matching location
+                selected = None
+                for loc in locations:
+                    if loc.display_name == chosen:
+                        selected = loc
+                        break
+
+                if not selected:
+                    selected = locations[0]
+
+            except Exception as e:
+                logger.error(f"Selection error: {e}")
                 return
 
+        logger.info(f"Setting location to: {selected.display_name}")
         self.weather_service.set_location(selected)
         self._threaded_update(None)
+        rumps.alert("Location Set", f"Weather location set to:\n{selected.display_name}")
 
 
 def run():
